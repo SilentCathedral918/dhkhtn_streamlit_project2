@@ -21,7 +21,9 @@ with open(file_stopword, 'r', encoding='utf-8') as file:
 stop_words = stop_words.split('\n')
 
 df_info = pd.read_csv(file_info)
+
 df_comments = pd.read_csv(file_comments)
+df_comments = pd.read_csv('hotel_comments.csv', encoding='utf-8-sig', header=0)
 
 def build_gensim(df):
   symbols_ = ['', ' ', ',', '.', '...', '-',':', ';', '?', '%', '(', ')', '+', '/', "'", '&']
@@ -102,13 +104,20 @@ def search_query_cossim(query, vectoriser, tfidf, df, nums=5):
 
 def recommend_other_hotels(hotel, df, cosine_sim):
   hotel_id_ = hotel['Hotel_ID']
-  index_ = df.index[df['Hotel_ID'] == hotel_id_][0]
+
+  df_ = df.reset_index(drop=True)
+  
+  if hotel_id_ not in df_['Hotel_ID'].values:
+    return pd.DataFrame()
+
+  index_ = df_[df_['Hotel_ID'] == hotel_id_].index[0]
+  if index_ >= len(cosine_sim):
+    return pd.DataFrame()
 
   sim_scores_ = list(enumerate(cosine_sim[index_]))
-  sim_scores_ = sorted(sim_scores_, key=(lambda x: x[1]), reverse=True)
-  sim_scores_ = sim_scores_[1:6]
-
+  sim_scores_ = sorted(sim_scores_, key=(lambda x: x[1]), reverse=True)[1:6]
   indices_ = [idx_[0] for idx_ in sim_scores_]
+  
   return df.iloc[indices_]
 
 @st.dialog(title='Thông Tin Khách Sạn', width='large')
@@ -170,7 +179,7 @@ def display_hotel_info(hotel, df_info, cosine_sim):
         clean_title_ = re.sub(r'["“”]', '', row_['Title'])
 
         st.markdown(f"<h4>{clean_title_}</h4>", unsafe_allow_html=True)
-        st.text_area(label='comment', label_visibility='collapsed', value=row_['Body'], disabled=False)
+        st.text_area(key=f'comment_textarea_{index_}', label='comment', label_visibility='collapsed', value=row_['Body'], disabled=False)
 
   # Other recommended hotels
   with st.container(border=True):
