@@ -725,7 +725,7 @@ def page_user_review() -> st.Page:
 
   (train_, test_) = features_mapped_.randomSplit([.8, .2], seed=42)
 
-  st.dataframe(train_.toPandas())
+  train_.printSchema()
 
   model_ = ALS(
     maxIter=10, regParam=0.5, rank=10,
