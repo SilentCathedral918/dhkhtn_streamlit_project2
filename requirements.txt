@@ -8,4 +8,5 @@ scikit-learn==1.7.2
 scipy==1.13.0
 gensim==4.3.3
 pyvi==0.1.1
-
+findspark==2.0.1
+pyspark==4.0.1

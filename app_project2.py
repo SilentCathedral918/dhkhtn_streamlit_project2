@@ -11,13 +11,9 @@ findspark.init()
 
 import pyspark
 
-from pyspark import SparkContext
-from pyspark.conf import SparkConf
 from pyspark.ml.recommendation import ALS
-from pyspark.ml.evaluation import RegressionEvaluator
-from pyspark.sql import SparkSession, Row
+from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
-from pyspark.sql.types import StringType
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel, cosine_similarity
