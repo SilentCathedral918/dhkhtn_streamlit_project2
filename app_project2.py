@@ -9,8 +9,6 @@ import math
 import findspark
 findspark.init()
 
-import pyspark
-
 from pyspark.ml.recommendation import ALS
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
