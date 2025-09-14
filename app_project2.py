@@ -655,6 +655,9 @@ def page_user_review() -> st.Page:
     \b  
   ''')
 
+  if 'show_dialog' not in st.session_state:
+    st.session_state.show_dialog = False
+
   score_cols_ = ['Total_Score', 'Location', 'Cleanliness', 'Service', 'Facilities', 'Value_for_money']
 
   data_info_ = (
