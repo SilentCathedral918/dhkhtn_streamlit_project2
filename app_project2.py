@@ -274,16 +274,6 @@ def preprocess_text(text):
   res_ = tokens_.apply(lambda ls: ' '.join(ls))
   return res_
 
-@st.cache_resource
-def get_data_into():
-  data_info_ = spark.read.csv(file_info, inferSchema=True, header=True, multiLine=True, escape='"', quote='"')
-  return data_info_
-
-@st.cache_resource
-def get_data_comments():
-  data_comments_ = spark.read.csv(file_comments, inferSchema=True, header=True, multiLine=True, escape='"', quote='"')
-  return data_comments_
-
 # ======================== User Interface ======================== #
 
 def page_hotel_search() -> st.Page:
@@ -672,7 +662,7 @@ def page_user_review() -> st.Page:
       clean_cond_ = cond_ if clean_cond_ is None else (clean_cond_ & cond_)
   
   # preprocess data_info
-  data_info_ = get_data_into()
+  data_info_ = spark.read.csv(file_info, inferSchema=True, header=True, multiLine=True, escape='"', quote='"')
   data_info_ = data_info_.drop('Comfort_and_room_quality')
   data_info_ = data_info_.filter(clean_cond_)
   data_info_ = data_info_.filter(col('Hotel_Description').isNotNull())
@@ -688,7 +678,7 @@ def page_user_review() -> st.Page:
     )
 
   # preprocess data_comments
-  data_comments_ = get_data_comments()
+  data_comments_ = spark.read.csv(file_comments, inferSchema=True, header=True, multiLine=True, escape='"', quote='"')
   data_comments_ = data_comments_.dropna(subset=['Body', 'Reviewer Name'])
   data_comments_ = data_comments_.withColumn('Score', regexp_replace(col('Score'), ',', '.').cast('float'))
 
@@ -717,8 +707,9 @@ def page_user_review() -> st.Page:
   valid_hotels_ = data_info_.select(col('Hotel_ID').alias('Hotel ID')).distinct()
   
   features_ = data_comments_.select('pseudo_user_id', 'Hotel ID', 'Score')
-  features_ = features_.withColumn('Score', regexp_replace('Score', ',', '.').cast('double'))
+  features_ = features_.withColumn('Score', expr("try_cast(regexp_replace(Score, ',', '.') as double)"))
   features_ = features_.join(valid_hotels_, on='Hotel ID', how='inner')
+
 
   user_id_map_ = features_.select('pseudo_user_id').distinct().withColumn('userId', monotonically_increasing_id())
   hotel_id_map_ = features_.select('Hotel ID').distinct().withColumn('hotelId', monotonically_increasing_id())
@@ -733,6 +724,8 @@ def page_user_review() -> st.Page:
   )
 
   (train_, test_) = features_mapped_.randomSplit([.8, .2], seed=42)
+
+  st.dataframe(train_.toPandas())
 
   model_ = ALS(
     maxIter=10, regParam=0.5, rank=10,
