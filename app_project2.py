@@ -717,7 +717,7 @@ def page_user_review() -> st.Page:
   valid_hotels_ = data_info_.select(col('Hotel_ID').alias('Hotel ID')).distinct()
   
   features_ = data_comments_.select('pseudo_user_id', 'Hotel ID', 'Score')
-  features_ = features_.withColumn('Score',regexp_replace('Score', ',', '.'))
+  features_ = features_.withColumn('Score', regexp_replace('Score', ',', '.').cast('double'))
   features_ = features_.join(valid_hotels_, on='Hotel ID', how='inner')
 
   user_id_map_ = features_.select('pseudo_user_id').distinct().withColumn('userId', monotonically_increasing_id())
