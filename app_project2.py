@@ -166,11 +166,13 @@ def display_hotel_info(hotel, df_info, cosine_sim):
     score_cols = ['Location', 'Cleanliness', 'Service', 'Facilities', 'Value_for_money']
 
     for index_, col_ in enumerate(scores_row): 
+      score_ = pd.to_numeric(hotel[score_cols[index_]]).round(1)
+      
       with col_.container(border=True):
         st.markdown(f'''
           ### {score_cols[index_]}
 
-          # {hotel[score_cols[index_]]} ({str(hotel[f'{score_cols[index_]}_class']).upper()})
+          # {score_} ({str(hotel[f'{score_cols[index_]}_class']).upper()})
         ''')
 
   # Top comments
@@ -216,7 +218,7 @@ def display_hotel_info(hotel, df_info, cosine_sim):
             """, unsafe_allow_html=True)
 
         with col2_:
-            if st.button("🔍", key=f"select_{index_}", width='stretch'):
+            if st.button("🔍", key=f"search_button_{index_}", width='stretch'):
                 st.session_state.selected_hotel = hotel_
                 st.session_state.show_dialog = True
                 st.rerun()
@@ -352,7 +354,6 @@ def page_hotel_search() -> st.Page:
        label='Minimum number of comments',
        value=5
     )
-    min_num_comments = min_num_comments_
 
     df_info_clean = df_info_clean[df_info_clean['comments_count'] > min_num_comments_]
 
@@ -691,7 +692,6 @@ def page_user_review() -> st.Page:
     .filter(col('Hotel_Description').isNotNull())
   )
 
-  # Add class categories
   for c in score_cols_:
     data_info_ = data_info_.withColumn(
       f'{c}_class',
@@ -724,7 +724,6 @@ def page_user_review() -> st.Page:
     """)
   )
 
-  # Generate pseudo user id
   data_comments_ = data_comments_.withColumn(
     'pseudo_user_id',
     concat_ws('_',
@@ -752,7 +751,6 @@ def page_user_review() -> st.Page:
   features_ = data_comments_.select('pseudo_user_id', 'Hotel ID', 'Score')
   features_ = features_.withColumn('Score', expr("try_cast(regexp_replace(Score, ',', '.') as double)"))
   features_ = features_.join(valid_hotels_, on='Hotel ID', how='inner')
-
 
   user_id_map_ = features_.select('pseudo_user_id').distinct().withColumn('userId', monotonically_increasing_id())
   hotel_id_map_ = features_.select('Hotel ID').distinct().withColumn('hotelId', monotonically_increasing_id())
@@ -825,6 +823,56 @@ def page_user_review() -> st.Page:
             st.session_state.selected_hotel = hotel_
             st.session_state.show_dialog = True
             st.rerun()
+
+  df_info_clean_ = data_info_.toPandas()
+
+  for col_ in score_cols_:
+    df_info_clean_[col_] = df_info_clean_[col_].astype(str).str.replace(',', '.', regex=False)
+    df_info_clean_[col_] = pd.to_numeric(df_info_clean_[col_], errors='coerce').round(1)   
+
+  df_info_clean_ = df_info_clean_.dropna(subset=score_cols_, how='all')
+  df_info_clean_ = df_info_clean_.dropna(subset=['Hotel_Description'])
+
+  for col_ in score_cols_:
+    df_info_clean_[col_] = df_info_clean_[col_].fillna(df_info_clean_[col_].median())
+
+  def classify_score(score):
+    if score < 6.0:
+        return 'low'
+    elif score < 8.0:
+        return 'medium'
+    else:
+        return 'high'
+    
+  for col_ in score_cols_:
+    df_info_clean_[col_ + '_class'] = df_info_clean_[col_].apply(lambda x: classify_score(x))
+
+  df_info_clean_ = df_info_clean_[df_info_clean_['comments_count'] > 5]
+
+  def convert_row_to_content(row):
+    content_ = []
+
+    description_ = str(row.get('Hotel_Description', '')).strip()
+    if description_:
+        content_.append(description_)
+
+    for col_ in score_cols_:
+        score_label_ = col_.lower()
+        score_class_ = str(row.get(col_ + '_class', 'unknown')).strip().lower()
+        content_.append(f'{score_label_}_{score_class_}')
+
+    return ' '.join(content_)
+  
+  df_content_ = pd.DataFrame()
+  df_content_['Content'] = df_info_clean_.apply(convert_row_to_content, axis=1)
+
+  vectoriser_ = TfidfVectorizer(analyzer='word', stop_words=stop_words)
+  tfidf_ = vectoriser_.fit_transform(df_content_['Content'])
+  cosine_sim_ = cosine_similarity(tfidf_, tfidf_)
+
+  if st.session_state.show_dialog == True:
+    display_hotel_info(st.session_state.selected_hotel, df_info_clean_, cosine_sim_)
+    st.session_state.show_dialog = False
 
 st.set_page_config(layout='wide')
 
