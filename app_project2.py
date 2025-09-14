@@ -671,7 +671,13 @@ def page_user_review() -> st.Page:
   for c in score_cols_:
     data_info_ = data_info_.withColumn(
       c,
-      regexp_replace(col(c), ',', '.').cast('float')
+      expr(f"""
+        CASE 
+          WHEN {c} RLIKE '^[0-9]+([.,][0-9]+)?$'
+          THEN cast(regexp_replace({c}, ',', '.') as float)
+          ELSE NULL
+        END
+      """)
     )
 
   clean_cond_ = None
@@ -695,9 +701,6 @@ def page_user_review() -> st.Page:
       .otherwise('high')
     )
 
-  # ------------------------------
-  # Load & clean user comments
-  # ------------------------------
   data_comments_ = (
     spark.read.csv(
       file_comments,
@@ -710,10 +713,15 @@ def page_user_review() -> st.Page:
     .dropna(subset=['Body', 'Reviewer Name'])
   )
 
-  # Clean Score BEFORE filtering
   data_comments_ = data_comments_.withColumn(
     'Score',
-    regexp_replace(col('Score'), ',', '.').cast('float')
+    expr("""
+      CASE 
+        WHEN Score RLIKE '^[0-9]+([.,][0-9]+)?$'
+        THEN cast(regexp_replace(Score, ',', '.') as float)
+        ELSE NULL
+      END
+    """)
   )
 
   # Generate pseudo user id
