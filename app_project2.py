@@ -4,6 +4,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import re
 import plotly.express as px
+import math
+
+import findspark
+findspark.init()
+
+import pyspark
+
+from pyspark import SparkContext
+from pyspark.conf import SparkConf
+from pyspark.ml.recommendation import ALS
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.sql import SparkSession, Row
+from pyspark.sql.functions import *
+from pyspark.sql.types import StringType
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel, cosine_similarity
@@ -20,9 +34,12 @@ with open(file_stopword, 'r', encoding='utf-8') as file:
     stop_words = file.read()
 stop_words = stop_words.split('\n')
 
+spark = SparkSession.builder.appName('DL07_K306_ONLINE_LyLaoViXuong_Project2_GUI').getOrCreate()
+
 df_info = pd.read_csv(file_info)
 
 df_comments = pd.read_csv(file_comments)
+
 df_comments = pd.read_csv('hotel_comments.csv', encoding='utf-8-sig', header=0)
 
 def build_gensim(df):
@@ -262,6 +279,16 @@ def preprocess_text(text):
 
   res_ = tokens_.apply(lambda ls: ' '.join(ls))
   return res_
+
+@st.cache_resource
+def get_data_into():
+  data_info_ = spark.read.csv(file_info, inferSchema=True, header=True, multiLine=True, escape='"', quote='"')
+  return data_info_
+
+@st.cache_resource
+def get_data_comments():
+  data_comments_ = spark.read.csv(file_comments, inferSchema=True, header=True, multiLine=True, escape='"', quote='"')
+  return data_comments_
 
 # ======================== User Interface ======================== #
 
@@ -637,12 +664,146 @@ def page_hotel_insight() -> st.Page:
         )
         st.plotly_chart(fig_)
 
+def page_user_review() -> st.Page:
+  st.markdown('''
+    # USER REVIEW
+    \b  
+  ''')
+
+  score_cols_ = ['Total_Score', 'Location', 'Cleanliness', 'Service', 'Facilities', 'Value_for_money']
+  
+  clean_cond_ = None
+  for col_ in score_cols_:
+      cond_ = (~col(col_).isNull()) & (~isnan(col(col_)))
+      clean_cond_ = cond_ if clean_cond_ is None else (clean_cond_ & cond_)
+  
+  # preprocess data_info
+  data_info_ = get_data_into()
+  data_info_ = data_info_.drop('Comfort_and_room_quality')
+  data_info_ = data_info_.filter(clean_cond_)
+  data_info_ = data_info_.filter(col('Hotel_Description').isNotNull())
+
+  for col_ in score_cols_:
+    data_info_ = data_info_.withColumn(col_, regexp_replace(col(col_), ',', '.').cast('float'))
+    data_info_ = data_info_.withColumn(
+        f'{col_}_class',
+        when(col(col_).isNull(), 'unknown')
+        .when(col(col_) < 6.0, 'low')
+        .when(col(col_) < 8.0, 'medium')
+        .otherwise('high')
+    )
+
+  # preprocess data_comments
+  data_comments_ = get_data_comments()
+  data_comments_ = data_comments_.dropna(subset=['Body', 'Reviewer Name'])
+  data_comments_ = data_comments_.withColumn('Score', regexp_replace(col('Score'), ',', '.').cast('float'))
+
+  data_comments_ = data_comments_.withColumn(
+    'pseudo_user_id',
+    concat_ws('_',
+        trim(lower(col('Reviewer Name'))),
+        trim(lower(col('Nationality'))),
+        trim(lower(col('Group Name')))
+    )
+  )
+
+  users_ = data_comments_.select('pseudo_user_id').distinct().limit(1000).toPandas()['pseudo_user_id'].tolist()
+
+  selected_user_id_ = st.selectbox(
+    label='User',
+    options=users_
+  )
+
+  min_num_results_ = st.number_input(
+    label='Minimum results',
+    min_value=1,
+    value=5
+  )
+
+  valid_hotels_ = data_info_.select(col('Hotel_ID').alias('Hotel ID')).distinct()
+  
+  features_ = data_comments_.select('pseudo_user_id', 'Hotel ID', 'Score')
+  features_ = features_.withColumn('Score',regexp_replace('Score', ',', '.'))
+  features_ = features_.join(valid_hotels_, on='Hotel ID', how='inner')
+
+  user_id_map_ = features_.select('pseudo_user_id').distinct().withColumn('userId', monotonically_increasing_id())
+  hotel_id_map_ = features_.select('Hotel ID').distinct().withColumn('hotelId', monotonically_increasing_id())
+
+  features_mapped_ = features_.join(user_id_map_, 'pseudo_user_id', 'left').join(hotel_id_map_, 'Hotel ID', 'left').select('userId', 'hotelId', 'Score')
+  features_mapped_ = features_mapped_.withColumnRenamed('Score', 'rating')
+  features_mapped_ = features_mapped_.na.drop()
+  features_mapped_ = features_mapped_.select(
+    col('userId').cast('int'),
+    col('hotelId').cast('int'),
+    col('rating').cast('float')
+  )
+
+  (train_, test_) = features_mapped_.randomSplit([.8, .2], seed=42)
+
+  model_ = ALS(
+    maxIter=10, regParam=0.5, rank=10,
+    userCol='userId', itemCol='hotelId', ratingCol='rating',
+    coldStartStrategy='drop'
+  ).fit(train_)
+
+  pred_ = model_.transform(test_)
+  pred_ = pred_.filter(pred_.prediction.isNotNull())
+  pred_ = pred_.withColumn('prediction', when(col('prediction') > 10, 10.0).when(col('prediction') < 0, 0.0).otherwise(col('prediction')))
+
+  selected_user_ = user_id_map_.filter(user_id_map_.pseudo_user_id == selected_user_id_)
+
+  recommends_ = model_.recommendForUserSubset(selected_user_, min_num_results_)
+
+  final_rec_ = recommends_.withColumn('recommendations', explode('recommendations'))
+  final_rec_ = final_rec_.select('userId', col('recommendations.hotelId'), col('recommendations.rating'))
+  final_rec_ = final_rec_.withColumn('rating', round(col('rating'), 1))
+  final_rec_ = final_rec_.join(user_id_map_, 'userId')
+  final_rec_ = final_rec_.join(hotel_id_map_, 'hotelId')
+  final_rec_ = final_rec_.select('userId', 'hotelId', 'rating')
+
+  final_with_ids_ = final_rec_.join(hotel_id_map_, on='hotelId', how='left')
+
+  final_with_info_ = final_with_ids_.join(data_info_, final_with_ids_['Hotel ID'] == data_info_['Hotel_ID'], how='left')
+  final_with_info_ = final_with_info_.filter(col('Hotel_Name').isNotNull())
+
+  df_results_ = final_with_info_.toPandas() 
+
+  with st.container(border=True):
+    st.markdown(f'''
+      ## Kết Quả
+    ''')
+
+    hotel_names_ = df_results_['Hotel_Name'].to_list()
+
+    for index_, name_ in enumerate(hotel_names_):
+      with st.container(border=True):
+        col1_, col2_ = st.columns([10, 1])
+
+        with col1_:
+          hotel_ = df_results_.iloc[index_]
+          score_ = hotel_['Total_Score']
+          score_str_ = f'{score_:.1f}' if pd.notnull(score_) else 'N/A'
+          
+          st.markdown(f"""
+            <div style='line-height:1.5'>
+              <span style='font-size:20px; font-weight:bold; color:#ffffff'>{hotel_['Hotel_Name']}</span><br>
+              <span style='font-size:18px; color:#27ae60;'>Tổng điểm: {score_str_}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+              <span style='font-size:18px; color:#2e86c1;'>⭐ {hotel_['Hotel_Rank']}</span>
+            </div>
+          """, unsafe_allow_html=True)
+        
+        with col2_:
+          if st.button("🔍", key=f"select_{index_}", width='stretch'):
+            st.session_state.selected_hotel = hotel_
+            st.session_state.show_dialog = True
+            st.rerun()
 
 st.set_page_config(layout='wide')
 
 pg = st.navigation([
     st.Page(page_hotel_search, title='Tìm kiếm Khách sạn'),
-    st.Page(page_hotel_insight, title='Hotel Insight')
+    st.Page(page_hotel_insight, title='Hotel Insight'),
+    st.Page(page_user_review, title='User Review')
   ],
   position='top'
 )
