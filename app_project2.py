@@ -28,7 +28,7 @@ with open(file_stopword, 'r', encoding='utf-8') as file:
     stop_words = file.read()
 stop_words = stop_words.split('\n')
 
-spark = SparkSession.builder.appName('DL07_K306_ONLINE_LyLaoViXuong_Project2_GUI').getOrCreate()
+spark = SparkSession.builder.appName('DL07_K306_ONLINE_LyLaoViXuong_Project2_GUI').config('spark.driver.memory', '512m').getOrCreate()
 
 df_info = pd.read_csv(file_info)
 
