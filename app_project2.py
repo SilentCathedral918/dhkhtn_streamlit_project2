@@ -655,39 +655,74 @@ def page_user_review() -> st.Page:
   ''')
 
   score_cols_ = ['Total_Score', 'Location', 'Cleanliness', 'Service', 'Facilities', 'Value_for_money']
-  
-  clean_cond_ = None
-  for col_ in score_cols_:
-      cond_ = (~col(col_).isNull()) & (~isnan(col(col_)))
-      clean_cond_ = cond_ if clean_cond_ is None else (clean_cond_ & cond_)
-  
-  # preprocess data_info
-  data_info_ = spark.read.csv(file_info, inferSchema=True, header=True, multiLine=True, escape='"', quote='"')
-  data_info_ = data_info_.drop('Comfort_and_room_quality')
-  data_info_ = data_info_.filter(clean_cond_)
-  data_info_ = data_info_.filter(col('Hotel_Description').isNotNull())
 
-  for col_ in score_cols_:
-    data_info_ = data_info_.withColumn(col_, regexp_replace(col(col_), ',', '.').cast('float'))
+  data_info_ = (
+    spark.read.csv(
+        file_info,
+        inferSchema=True,
+        header=True,
+        multiLine=True,
+        escape='"',
+        quote='"'
+    )
+    .drop('Comfort_and_room_quality')
+  )
+
+  for c in score_cols_:
     data_info_ = data_info_.withColumn(
-        f'{col_}_class',
-        when(col(col_).isNull(), 'unknown')
-        .when(col(col_) < 6.0, 'low')
-        .when(col(col_) < 8.0, 'medium')
-        .otherwise('high')
+      c,
+      regexp_replace(col(c), ',', '.').cast('float')
     )
 
-  # preprocess data_comments
-  data_comments_ = spark.read.csv(file_comments, inferSchema=True, header=True, multiLine=True, escape='"', quote='"')
-  data_comments_ = data_comments_.dropna(subset=['Body', 'Reviewer Name'])
-  data_comments_ = data_comments_.withColumn('Score', regexp_replace(col('Score'), ',', '.').cast('float'))
+  clean_cond_ = None
+  for c in score_cols_:
+    cond_ = (~col(c).isNull()) & (~isnan(col(c)))
+    clean_cond_ = cond_ if clean_cond_ is None else (clean_cond_ & cond_)
 
+  data_info_ = (
+    data_info_
+    .filter(clean_cond_)
+    .filter(col('Hotel_Description').isNotNull())
+  )
+
+  # Add class categories
+  for c in score_cols_:
+    data_info_ = data_info_.withColumn(
+      f'{c}_class',
+      when(col(c).isNull(), 'unknown')
+      .when(col(c) < 6.0, 'low')
+      .when(col(c) < 8.0, 'medium')
+      .otherwise('high')
+    )
+
+  # ------------------------------
+  # Load & clean user comments
+  # ------------------------------
+  data_comments_ = (
+    spark.read.csv(
+      file_comments,
+      inferSchema=True,
+      header=True,
+      multiLine=True,
+      escape='"',
+      quote='"'
+    )
+    .dropna(subset=['Body', 'Reviewer Name'])
+  )
+
+  # Clean Score BEFORE filtering
+  data_comments_ = data_comments_.withColumn(
+    'Score',
+    regexp_replace(col('Score'), ',', '.').cast('float')
+  )
+
+  # Generate pseudo user id
   data_comments_ = data_comments_.withColumn(
     'pseudo_user_id',
     concat_ws('_',
-        trim(lower(col('Reviewer Name'))),
-        trim(lower(col('Nationality'))),
-        trim(lower(col('Group Name')))
+      trim(lower(col('Reviewer Name'))),
+      trim(lower(col('Nationality'))),
+      trim(lower(col('Group Name')))
     )
   )
 
@@ -716,16 +751,14 @@ def page_user_review() -> st.Page:
 
   features_mapped_ = features_.join(user_id_map_, 'pseudo_user_id', 'left').join(hotel_id_map_, 'Hotel ID', 'left').select('userId', 'hotelId', 'Score')
   features_mapped_ = features_mapped_.withColumnRenamed('Score', 'rating')
-  features_mapped_ = features_mapped_.na.drop()
   features_mapped_ = features_mapped_.select(
     col('userId').cast('int'),
     col('hotelId').cast('int'),
     col('rating').cast('float')
   )
+  features_mapped_ = features_mapped_.na.drop()
 
   (train_, test_) = features_mapped_.randomSplit([.8, .2], seed=42)
-
-  train_.printSchema()
 
   model_ = ALS(
     maxIter=10, regParam=0.5, rank=10,
