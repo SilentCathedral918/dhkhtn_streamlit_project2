@@ -146,7 +146,7 @@ def display_hotel_info(hotel, df_info, cosine_sim):
       ## :green[Thông Tin Chung]
       ## :blue[Địa chỉ:] {hotel['Hotel_Address']}
       ## :blue[Hạng Sao:] {hotel['Hotel_Rank']}
-      ## :blue[Tổng điểm trung bình:] {hotel['Total_Score']} điểm
+      ## :blue[Tổng điểm trung bình:] {hotel['Total_Score']:.1f} điểm
     ''')
   
   # Description
@@ -166,13 +166,13 @@ def display_hotel_info(hotel, df_info, cosine_sim):
     score_cols = ['Location', 'Cleanliness', 'Service', 'Facilities', 'Value_for_money']
 
     for index_, col_ in enumerate(scores_row): 
-      score_ = pd.to_numeric(hotel[score_cols[index_]]).round(1)
+      score_ = pd.to_numeric(hotel[score_cols[index_]])
       
       with col_.container(border=True):
         st.markdown(f'''
           ### {score_cols[index_]}
 
-          # {score_} ({str(hotel[f'{score_cols[index_]}_class']).upper()})
+          # {score_:.1f} ({str(hotel[f'{score_cols[index_]}_class']).upper()})
         ''')
 
   # Top comments
@@ -194,34 +194,37 @@ def display_hotel_info(hotel, df_info, cosine_sim):
         st.markdown(f"<h4>{clean_title_}</h4>", unsafe_allow_html=True)
         st.text_area(key=f'comment_textarea_{index_}', label='comment', label_visibility='collapsed', value=row_['Body'], disabled=False)
 
+  
   # Other recommended hotels
-  with st.container(border=True):
-    st.markdown(f'''
-      ## :green[Các Khách Sạn Khác Bạn Cũng Có Thể Quan Tâm]
-    ''')
+  other_hotels_ = recommend_other_hotels(hotel, df_info, cosine_sim)
+  if not other_hotels_.empty:
+    with st.container(border=True):
+      st.markdown(f'''
+        ## :green[Các Khách Sạn Khác Bạn Cũng Có Thể Quan Tâm]
+      ''')
 
-    other_hotels_ = recommend_other_hotels(hotel, df_info, cosine_sim)
-    hotel_names_ = other_hotels_['Hotel_Name'].to_list()
+      st.dataframe(other_hotels_)
+      hotel_names_ = other_hotels_['Hotel_Name'].to_list()
 
-    for index_, name_ in enumerate(hotel_names_):
-      with st.container(border=True):
-        col1_, col2_ = st.columns([10, 1])
+      for index_, name_ in enumerate(hotel_names_):
+        with st.container(border=True):
+          col1_, col2_ = st.columns([10, 1])
 
-        with col1_:
-            hotel_ = other_hotels_.iloc[index_]
-            st.markdown(f"""
-                <div style='line-height:1.5'>
-                    <span style='font-size:20px; font-weight:bold; color:#ffffff'>{hotel_['Hotel_Name']}</span><br>
-                    <span style='font-size:18px; color:#27ae60;'>Tổng điểm: {hotel_['Total_Score']}</span> &nbsp;&nbsp;&nbsp;&nbsp;
-                    <span style='font-size:18px; color:#2e86c1;'>⭐ {hotel_['Hotel_Rank']}</span>
-                </div>
-            """, unsafe_allow_html=True)
+          with col1_:
+              hotel_ = other_hotels_.iloc[index_]
+              st.markdown(f"""
+                  <div style='line-height:1.5'>
+                      <span style='font-size:20px; font-weight:bold; color:#ffffff'>{hotel_['Hotel_Name']}</span><br>
+                      <span style='font-size:18px; color:#27ae60;'>Tổng điểm: {hotel_['Total_Score']}</span> &nbsp;&nbsp;&nbsp;&nbsp;
+                      <span style='font-size:18px; color:#2e86c1;'>⭐ {hotel_['Hotel_Rank']}</span>
+                  </div>
+              """, unsafe_allow_html=True)
 
-        with col2_:
-            if st.button("🔍", key=f"search_button_{index_}", width='stretch'):
-                st.session_state.selected_hotel = hotel_
-                st.session_state.show_dialog = True
-                st.rerun()
+          with col2_:
+              if st.button("🔍", key=f"search_button_{index_}", width='stretch'):
+                  st.session_state.selected_hotel = hotel_
+                  st.session_state.show_dialog = True
+                  st.rerun()
 
 def display_recommend_results(df_search_result, df_info, cosine_sim):
   st.markdown('''
@@ -811,7 +814,7 @@ def page_user_review() -> st.Page:
         with col1_:
           hotel_ = df_results_.iloc[index_]
           score_ = hotel_['Total_Score']
-          score_str_ = f'{score_:.1f}' if pd.notnull(score_) else 'N/A'
+          score_str_ = f'{score_:.2f}' if pd.notnull(score_) else 'N/A'
           
           st.markdown(f"""
             <div style='line-height:1.5'>
@@ -831,7 +834,7 @@ def page_user_review() -> st.Page:
 
   for col_ in score_cols_:
     df_info_clean_[col_] = df_info_clean_[col_].astype(str).str.replace(',', '.', regex=False)
-    df_info_clean_[col_] = pd.to_numeric(df_info_clean_[col_], errors='coerce').round(1)   
+    df_info_clean_[col_] = pd.to_numeric(df_info_clean_[col_], errors='coerce')
 
   df_info_clean_ = df_info_clean_.dropna(subset=score_cols_, how='all')
   df_info_clean_ = df_info_clean_.dropna(subset=['Hotel_Description'])
